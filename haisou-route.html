@@ -324,8 +324,8 @@ $("opt").onclick=async()=>{
   if(h.indexOf("#t=")!==0)return;
   try{
     const t=decodeURIComponent(h.slice(3)).trim();
-    const cur=$("src").value.trim();
-    $("src").value=(cur?cur+"\n":"")+t;
+    $("src").value=t;
+    editKey=null;
     history.replaceState(null,"",location.pathname+location.search);
     optOrder=null;render();
   }catch(e){}
