@@ -42,6 +42,7 @@ summary{cursor:pointer;color:var(--muted);padding:8px 0}
 .act{display:flex;gap:6px;margin-top:6px}
 .act button{min-height:36px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:none;color:var(--muted);font:inherit;font-size:.85rem;cursor:pointer}
 .ei{margin-top:6px}
+.co{font-weight:600}
 .mv{flex:none;display:flex;gap:4px;align-items:flex-start}
 .mv button{min-width:40px;min-height:40px;border:2px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font:inherit;cursor:pointer}
 .qa{display:flex;gap:8px;margin:0}
@@ -62,6 +63,7 @@ summary{cursor:pointer;color:var(--muted);padding:8px 0}
 
 <h2>担当の町</h2>
 <div class="chips" id="chips"></div>
+<p class="sub" style="margin:-4px 0 10px;font-size:.85rem">川崎区の住所は、ここにない町も自動で入ります(登録した町が先に並びます)。</p>
 <form class="add" id="addf" onsubmit="return false">
 <input id="newTown" placeholder="町名を追加(例: 渡田)" aria-label="町名を追加">
 <button class="btn" id="addBtn" type="button">追加</button>
@@ -80,18 +82,24 @@ const store={get(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v)
 let towns=store.get("towns",DEF);
 const $=id=>document.getElementById(id);
 const esc=s=>s.replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const joinD=(a,b)=>!a?b:!b?a:(/\d$/.test(a)&&/^\d/.test(b)?a+b:a+" "+b);
 const norm=s=>s.replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0)).replace(/(\d)[－―−‐ー–—の](?=\d)/g,"$1-").replace(/　/g," ");
 
 function parse(line){
   const parts=line.split(/[|\t]/).map(x=>x.trim());
-  const name=parts[1]||"";
+  const name=parts[1]||"",extra=parts[2]||"";
   const addr=norm(parts[0]).replace(/^〒?\d{3}-?\d{4}\s*/,"").replace(/\s+/g," ");
   let ti=-1,pos=0;
   for(let i=0;i<towns.length;i++){const p=addr.indexOf(towns[i]);if(p>-1){ti=i;pos=p+towns[i].length;break}}
-  if(ti<0)return{addr,name,out:true};
+  let tn=ti>=0?towns[ti]:"";
+  if(ti<0){
+    const m=addr.match(/川崎区\s*([^\d\s\-]+)/);
+    if(!m)return{addr,name,out:true};
+    tn=m[1];ti=towns.length;pos=addr.indexOf(m[0])+m[0].length;
+  }
   const rest=addr.slice(pos).trim().split(" ")[0];
   const nums=(rest.match(/\d+/g)||[]).map(Number);
-  return{addr,name,ti,nums,base:"神奈川県川崎市川崎区"+towns[ti]+rest,label:towns[ti]+rest};
+  return{addr,name,ti,nums,detail:joinD(addr.slice(pos).trim().split(" ").slice(1).join(" "),extra),tname:tn,base:"神奈川県川崎市川崎区"+tn+rest,label:tn+rest};
 }
 const isAddr=s=>/[都道府県].*[市区郡]|[市区町村].*\d/.test(norm(s));
 function toRows(lines){
@@ -100,14 +108,24 @@ function toRows(lines){
     const l=lines[i];
     if(/[|\t]/.test(l)){const r=parse(l);r.idx=i;rows.push(r);continue}
     if(!isAddr(l))continue;
-    const nx=lines[i+1]||"",nn=norm(nx);
-    const okName=nx.length>=2&&!isAddr(nx)&&!/^[\d\s\-:：]/.test(nn)&&!/^(TEL|〒|注文|型式)/i.test(nn)&&nx!=="様";
-    {const r=parse(l+(okName?" | "+nx.replace(/\s*様$/,"").trim():""));r.idx=i;rows.push(r)}
+    const junk=t=>/^[\d\s\-:：]+$/.test(norm(t))||/使用欄|^(TEL|〒|注文|型式)/i.test(norm(t))||t==="様"||/^お届け先|^ご依頼/.test(t);
+    const isCo=t=>/株式会社|有限会社|合同会社|\(株\)|（株）|㈱|\(有\)|法人|協会|組合|事務所|店$|センター|病院|学校/.test(t);
+    const cont=t=>/ビル|階|号室|マンション|ハイツ|コーポ|メゾン|荘|棟|^\d+\s*(F|号)/.test(t);
+    let nm="",dt="";
+    for(let k=1;k<=4;k++){
+      const c=(lines[i+k]||"").trim();
+      if(!c||isAddr(c))break;
+      if(junk(c))continue;
+      if(!isCo(c)&&cont(c)){dt=joinD(dt,c);continue}
+      nm=c;break;
+    }
+    {const r=parse(l+" | "+nm.replace(/\s*様$/,"").trim()+(dt?" | "+dt:""));r.idx=i;rows.push(r)}
   }
   return rows;
 }
 function cmp(a,b){
   if(a.ti!==b.ti)return a.ti-b.ti;
+  if(a.ti===towns.length&&a.tname!==b.tname)return a.tname.localeCompare(b.tname,"ja");
   const n=Math.max(a.nums.length,b.nums.length);
   for(let k=0;k<n;k++){const d=(a.nums[k]??-1)-(b.nums[k]??-1);if(d)return d}
   return 0;
@@ -126,8 +144,8 @@ function render(){
   const merged=new Map();
   rows.filter(r=>!r.out).sort(cmp).forEach(r=>{
     const m=merged.get(r.base);
-    if(m){m.idxs.push(r.idx);m.count++;if(r.name&&!m.names.includes(r.name))m.names.push(r.name)}
-    else merged.set(r.base,{...r,count:1,idxs:[r.idx],names:r.name?[r.name]:[]});
+    if(m){m.idxs.push(r.idx);m.count++;if(r.name&&!m.names.includes(r.name))m.names.push(r.name);if(r.detail&&!m.details.includes(r.detail))m.details.push(r.detail)}
+    else merged.set(r.base,{...r,count:1,idxs:[r.idx],names:r.name?[r.name]:[],details:r.detail?[r.detail]:[]});
   });
   const stops=[...merged.values()];
   lastStops=stops.slice();
@@ -143,13 +161,13 @@ function render(){
     const origin=i>0?stops[i-1].base:"";
     html+='<section class="group"><div class="ghead"><span>'+(i+1)+'〜'+(i+chunk.length)+'件目</span><a class="btn" target="_blank" rel="noopener" href="'+mapUrl(chunk,origin)+'">地図で開く</a></div><ol>';
     chunk.forEach((s,k)=>{
-      if(editKey===s.base){html+=editRow(String(i+k+1),s.label,s.names.join(" / "));return}
-      html+='<li><span class="n">'+(i+k+1)+'</span><span class="t">'+esc(s.label)+(s.count>1?' <b>×'+s.count+'</b>':'')+(s.nums.length?'':' <span class="tag">番地を確認</span>')+(s.names.length?'<div class="nm">'+esc(s.names.join(" / "))+'</div>':'')+'<div class="act"><button type="button" data-e="'+esc(s.base)+'">編集</button><button type="button" data-x="'+esc(s.base)+'">削除</button></div></span><span class="mv"><button type="button" data-k="'+(i+k)+'" data-d="-1" aria-label="上へ">▲</button><button type="button" data-k="'+(i+k)+'" data-d="1" aria-label="下へ">▼</button></span></li>';
+      if(editKey===s.base){html+=editRow(String(i+k+1),s.label,s.names.join(" / "),s.details.join(" / "));return}
+      html+='<li><span class="n">'+(i+k+1)+'</span><span class="t">'+esc(s.label)+(s.count>1?' <b>×'+s.count+'</b>':'')+(s.nums.length?'':' <span class="tag">番地を確認</span>')+(s.details.length?'<div class="nm">'+esc(s.details.join(" / "))+'</div>':'')+(s.names.length?'<div class="co">'+esc(s.names.join(" / "))+'</div>':'')+'<div class="act"><button type="button" data-e="'+esc(s.base)+'">編集</button><button type="button" data-x="'+esc(s.base)+'">削除</button></div></span><span class="mv"><button type="button" data-k="'+(i+k)+'" data-d="-1" aria-label="上へ">▲</button><button type="button" data-k="'+(i+k)+'" data-d="1" aria-label="下へ">▼</button></span></li>';
     });
     html+='</ol></section>';
   }
   if(outs.length){
-    html+='<details'+((outOpen||String(editKey).startsWith("out:"))?' open':'')+' style="margin-top:20px"><summary>担当の町ではない住所 '+outs.length+'件(地図には入れていません)</summary><section class="group out"><ol>'+outs.map(o=>editKey==="out:"+o.idx?editRow("",o.addr,o.name):'<li><span class="t">'+esc(o.addr)+(o.name?'<div class="nm">'+esc(o.name)+'</div>':'')+'<div class="act"><button type="button" data-e="out:'+o.idx+'">編集</button><button type="button" data-x="out:'+o.idx+'">削除</button></div></span></li>').join("")+'</ol></section></details>';
+    html+='<details'+((outOpen||String(editKey).startsWith("out:"))?' open':'')+' style="margin-top:20px"><summary>川崎区以外の住所 '+outs.length+'件(地図には入れていません)</summary><section class="group out"><ol>'+outs.map(o=>editKey==="out:"+o.idx?editRow("",o.addr,o.name):'<li><span class="t">'+esc(o.addr)+(o.name?'<div class="nm">'+esc(o.name)+'</div>':'')+'<div class="act"><button type="button" data-e="out:'+o.idx+'">編集</button><button type="button" data-x="out:'+o.idx+'">削除</button></div></span></li>').join("")+'</ol></section></details>';
   }
   res.innerHTML=html;
   res.querySelectorAll(".mv button").forEach(b=>b.onclick=()=>move(+b.dataset.k,+b.dataset.d));
@@ -161,7 +179,7 @@ function render(){
   if(dt)dt.ontoggle=()=>{outOpen=dt.open};
   const cp=$("copy");
   if(cp)cp.onclick=async()=>{
-    const t=stops.map((s,i)=>(i+1)+". "+s.label+(s.names.length?" "+s.names.join(" / "):"")).join("\n");
+    const t=stops.map((s,i)=>(i+1)+". "+s.label+(s.details.length?" "+s.details.join(" / "):"")+(s.names.length?" "+s.names.join(" / "):"")).join("\n");
     try{await navigator.clipboard.writeText(t);cp.textContent="コピーしました"}catch(e){cp.textContent="コピーできません"}
     setTimeout(()=>{cp.textContent="順番をコピー"},1800);
   };
@@ -229,14 +247,14 @@ async function roadMatrix(cs,start){
   if(j.code!=="Ok"||!j.durations)throw new Error("osrm");
   return j.durations;
 }
-function editRow(n,addr,name){
-  return '<li><span class="n">'+n+'</span><span class="t"><input class="ei" id="ea" value="'+esc(addr)+'" aria-label="住所"><input class="ei" id="en" value="'+esc(name)+'" placeholder="受取人(任意)" aria-label="受取人"><div class="act"><button type="button" id="esave">保存</button><button type="button" id="ecancel">キャンセル</button></div></span></li>';
+function editRow(n,addr,name,detail){
+  return '<li><span class="n">'+n+'</span><span class="t"><input class="ei" id="ea" value="'+esc(addr)+'" aria-label="住所"><input class="ei" id="ed" value="'+esc(detail||"")+'" placeholder="建物・階・号室(任意)" aria-label="建物・階・号室"><input class="ei" id="en" value="'+esc(name)+'" placeholder="受取人(任意)" aria-label="受取人"><div class="act"><button type="button" id="esave">保存</button><button type="button" id="ecancel">キャンセル</button></div></span></li>';
 }
 function saveEdit(){
   const key=editKey,idxs=rowIdx.get(key);
   const addr=$("ea").value.replace(/[|\n]/g," ").trim(),name=$("en").value.replace(/[|\n]/g," ").trim();
   if(!idxs||!addr)return;
-  const line=addr+" | "+name,a=curLines.slice();
+  const det=$("ed").value.replace(/[|\n]/g," ").trim(),line=addr+" | "+name+(det?" | "+det:""),a=curLines.slice();
   idxs.forEach(ix=>{a[ix]=line});
   const nb=parse(line).base;
   if(optOrder&&nb&&optOrder.has(key))optOrder.set(nb,optOrder.get(key));
